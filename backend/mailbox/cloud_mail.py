@@ -6,7 +6,12 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from backend.mailbox.utilities import extract_verification_code, generate_username, strip_html
+from backend.mailbox.utilities import (
+    extract_verification_code,
+    generate_username,
+    strip_html,
+    weighted_domain_schedule,
+)
 
 HttpGet = Callable[..., Any]
 HttpPost = Callable[..., Any]
@@ -200,16 +205,16 @@ def create_mailbox(
     username: str = "",
 ) -> Tuple[str, str]:
     global _domain_index
-    cleaned = [item.strip() for item in domains if str(item).strip()]
     if not url:
         raise Exception("CloudMail URL 未配置")
     if not admin_email:
         raise Exception("CloudMail 管理员邮箱未配置")
     if not admin_password:
         raise Exception("CloudMail 管理员密码未配置")
-    if not cleaned:
+    schedule = weighted_domain_schedule(",".join(domains))
+    if not schedule:
         raise Exception("CloudMail 需要在 defaultDomains 中配置可用域名")
-    domain = cleaned[_domain_index % len(cleaned)]
+    domain = schedule[_domain_index % len(schedule)]
     _domain_index += 1
     address = f"{(username or generate_username(10))}@{domain}"
     result = add_address(http_post, url, admin_email, admin_password, address)

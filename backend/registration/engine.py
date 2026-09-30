@@ -42,6 +42,7 @@ from backend.mailbox import beeinbox as beeinbox_provider
 from backend.mailbox import yyds_mail as yyds_provider
 from backend.mailbox.utilities import extract_verification_code as _extract_code
 from backend.mailbox.utilities import generate_username as _generate_username
+from backend.mailbox.utilities import parse_weighted_domains
 from backend.mailbox.utilities import pick_list_payload as _pick_list
 
 from backend.automation import session as _bs
@@ -996,7 +997,9 @@ def cloudflare_apply_auth_params(params=None):
 
 def cloudflare_next_default_domain():
     global _cf_domain_index
-    domains = [x.strip() for x in str(config.get("defaultDomains", "") or "").split(",") if x.strip()]
+    # Strip any ``^weight`` suffix so a weighted defaultDomains list cannot
+    # leak a token like "123.xyz^3" into the Cloudflare provider.
+    domains = [domain for domain, _ in parse_weighted_domains(str(config.get("defaultDomains", "") or ""))]
     domain, _cf_domain_index = cloudflare_provider.next_default_domain(domains, _cf_domain_index)
     return domain
 

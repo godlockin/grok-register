@@ -15,6 +15,76 @@ def generate_username(length: int = 10) -> str:
     return "".join(secrets.choice(chars) for _ in range(max(3, length)))
 
 
+# domain^weight, e.g. "123.xyz^3" or just "123.xyz" (weight 1).
+_DOMAIN_WEIGHT_RE = re.compile(r"^(?P<domain>[^,，\s^]+?)\s*\^\s*(?P<weight>\d+)?$")
+# Reject absurd weights so a typo cannot starve every other domain.
+MAX_DOMAIN_WEIGHT = 1000
+
+
+def parse_weighted_domains(raw: str) -> list[tuple[str, int]]:
+    """Parse ``defaultDomains`` into ``(domain, weight)`` pairs.
+
+    Accepts the plain comma/space separated form and an optional ``^N``
+    suffix: ``"a.xyz^3, b.xyz"`` weights a.xyz three times as heavily as
+    b.xyz. A bare domain means weight 1, and repeating a domain still works as
+    before, so existing configurations keep their behaviour.
+    """
+
+    pairs: list[tuple[str, int]] = []
+    text = str(raw or "")
+    # "a.xyz ^ 3" must survive as one token, so remove spaces around a caret
+    # before splitting on separators.
+    text = re.sub(r"\s*\^\s*", "^", text)
+    for chunk in re.split(r"[,，\s]+", text):
+        token = chunk.strip()
+        if not token:
+            continue
+        match = _DOMAIN_WEIGHT_RE.match(token)
+        if match is None:
+            # Not a domain^weight token; treat the whole chunk as a domain.
+            pairs.append((token, 1))
+            continue
+        domain = match.group("domain")
+        weight_text = match.group("weight")
+        if not domain:
+            continue
+        try:
+            weight = int(weight_text) if weight_text else 1
+        except ValueError:
+            weight = 1
+        pairs.append((domain, max(1, min(weight, MAX_DOMAIN_WEIGHT))))
+    return pairs
+
+
+def weighted_domain_schedule(
+    raw: str,
+) -> list[str]:
+    """Expand weighted domains into a repeating round-robin sequence.
+
+    A deterministic schedule is used instead of sampling so the configured
+    ratio actually holds: for ``a^3, b^1`` every window of four picks
+    contains three ``a`` and one ``b``, rather than converging on the ratio only
+    on average. The caller walks the sequence with a cursor and wraps it, so the
+    weights apply across however many registrations are run.
+    """
+
+    pairs = parse_weighted_domains(raw)
+    if not pairs:
+        return []
+    # Merge duplicates so repeating a domain adds its weights together.
+    merged: dict[str, int] = {}
+    order: list[str] = []
+    for domain, weight in pairs:
+        if domain not in merged:
+            merged[domain] = 0
+            order.append(domain)
+        merged[domain] += weight
+    schedule: list[str] = []
+    for domain in order:
+        schedule.extend([domain] * merged[domain])
+    return schedule
+
+
 def pick_list_payload(data: Any) -> List[dict]:
     if isinstance(data, list):
         return [item for item in data if isinstance(item, dict)]
