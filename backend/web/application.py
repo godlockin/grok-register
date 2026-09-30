@@ -48,6 +48,10 @@ CONFIG_PUBLIC_KEYS = (
     "duckmail_api_key",
     "duckmail_api_base",
     "defaultDomains",
+    "tempmail_io_api_base",
+    "tempmail_io_domain",
+    "haoweichi_api_base",
+    "beeinbox_domain",
     "cloudmail_url",
     "cloudmail_admin_email",
     "cloudmail_password",
@@ -413,7 +417,7 @@ def _apply_config_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
                 value = "standard"
         elif key == "email_provider":
             value = str(value or "cloudflare").strip().lower() or "cloudflare"
-            if value not in {"cloudflare", "duckmail", "yyds", "mailnest", "outlookemail", "cloudmail"}:
+            if value not in {"cloudflare", "duckmail", "yyds", "mailnest", "outlookemail", "cloudmail", "tempmail_io", "haoweichi", "beeinbox"}:
                 value = "cloudflare"
         elif key == "outlookemail_source":
             value = str(value or "accounts").strip().lower()

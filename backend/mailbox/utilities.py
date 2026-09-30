@@ -46,13 +46,19 @@ _CODE_WITH_CONTEXT_RE = re.compile(
 _CODE_BARE_RE = re.compile(r"\b(" + _CODE_TOKEN + r")\b")
 _NUMERIC_CODE_RES = [
     re.compile(
-        r"(?:verification|confirmation|confirm|your)\s+code\s*(?:is|：|:)?\s*(\d{3}-\d{3})",
+        r"(?:verification|confirmation|confirm|your|xai|grok)?\s*(?:verification|confirmation|confirm|your)?\s*code\s*(?:is|为|是|：|:|\s)+\s*(\d{3}-\d{3})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:verification|confirmation|confirm|your|xai|grok)?\s*(?:verification|confirmation|confirm|your)?\s*code\s*(?:is|为|是|：|:|\s)+\s*(\d{4,8})",
         re.IGNORECASE,
     ),
     re.compile(r"验证码\s*(?:是|为|：|:)?\s*(\d{3}-\d{3})"),
+    re.compile(r"验证码\s*(?:是|为|：|:|\s)+\s*(\d{4,8})"),
     re.compile(r"verification\s+code[:\s]+(\d{4,8})", re.IGNORECASE),
     re.compile(r"your\s+code[:\s]+(\d{4,8})", re.IGNORECASE),
     re.compile(r"confirm(?:ation)?\s+code[:\s]+(\d{4,8})", re.IGNORECASE),
+    re.compile(r"\b(\d{6})\b"),
 ]
 
 

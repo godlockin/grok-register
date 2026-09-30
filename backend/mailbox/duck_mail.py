@@ -92,10 +92,21 @@ def pick_domain(domains: List[dict]) -> str:
         and (d.get("isActive") is not False)
     ]
     if private:
-        return private[0]["domain"]
+        return secrets.choice(private)["domain"]
     public = [d for d in domains if domain_is_usable(d)]
     if public:
-        return public[0]["domain"]
+        # 优先使用 .com / .org 等高信任度公共域，排除易被识别或被限流的 duckmail、.shop、.sbs 与 glasswhitehub.com 域
+        high_trust = [
+            d
+            for d in public
+            if not any(
+                bad in str(d.get("domain", "")).lower()
+                for bad in ["duckmail", ".shop", ".sbs", "glasswhitehub.com"]
+            )
+        ]
+        if high_trust:
+            return secrets.choice(high_trust)["domain"]
+        return secrets.choice(public)["domain"]
     for d in domains:
         if d.get("domain"):
             return d["domain"]

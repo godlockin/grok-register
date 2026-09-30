@@ -7,6 +7,9 @@ services:
     container_name: grok-register
     init: true
     restart: unless-stopped
+    depends_on:
+      grok2api:
+        condition: service_healthy
     ports:
       - "${GROK_WEB_PORT:-8787}:8787"
     environment:
@@ -16,7 +19,10 @@ services:
       GROK_BROWSER_ENGINE: ${GROK_BROWSER_ENGINE:-camoufox}
       GROK_CONFIG_FILE: /app/data/config.json
       GROK_DOCKER_PROXY_HOST: host.docker.internal
-      GROK_OUTLOOKEMAIL_API_BASE: http://outlook-email:5000
+      GROKIQ_WEBHOOK_ENABLED: ${GROKIQ_WEBHOOK_ENABLED:-true}
+      GROKIQ_WEBHOOK_URL: ${GROKIQ_WEBHOOK_URL:-http://grokiq-backend:8090/api/integrations/grok-register/account-imported}
+      GROKIQ_WEBHOOK_TOKEN: ${GROKIQ_WEBHOOK_TOKEN:-grokiq_webhook_token_2026}
+      GROKIQ_WEBHOOK_TIMEOUT_SECONDS: ${GROKIQ_WEBHOOK_TIMEOUT_SECONDS:-10}
       CLOAKBROWSER_LICENSE_KEY: ${CLOAKBROWSER_LICENSE_KEY:-}
       CLOAKBROWSER_VERSION: ${CLOAKBROWSER_VERSION:-}
       CLOAKBROWSER_RELEASE_CHANNEL: ${CLOAKBROWSER_RELEASE_CHANNEL:-stable}
@@ -27,6 +33,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./backend:/app/backend
     shm_size: ${GROK_SHM_SIZE:-1gb}
     security_opt:
       - seccomp=unconfined
@@ -41,33 +48,108 @@ services:
       start_period: 20s
       retries: 3
 
-  # 可选 OutlookEmail 邮箱池：
-  # docker compose --profile outlookemail up -d
-  outlook-email:
-    profiles: ["outlookemail"]
-    image: ${OUTLOOKEMAIL_IMAGE:-ghcr.io/assast/outlookemail:latest}
-    container_name: outlook-mail-reader
+  # grok2api: OpenAI 格式兼容接口与账号池管理
+  grok2api:
+    container_name: grok2api
+    image: "${GROK2API_IMAGE:-grok2api:local}"
+    build:
+      context: ../grok2api
+      dockerfile: Dockerfile
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
     ports:
-      # 不指定 Host IP，端口对宿主机所有网卡开放。
-      - "${OUTLOOKEMAIL_PORT:-5000}:5000"
+      - "${GROK2API_PORT:-8000}:8000"
     environment:
-      LOGIN_PASSWORD: ${OUTLOOKEMAIL_LOGIN_PASSWORD:-change-this-outlookemail-password}
-      SECRET_KEY: ${OUTLOOKEMAIL_SECRET_KEY:-change-this-outlookemail-secret-key}
-      FLASK_ENV: production
-      HOST: 0.0.0.0
-      PORT: 5000
-      DOCKER_UPDATE_ENABLED: ${OUTLOOKEMAIL_DOCKER_UPDATE_ENABLED:-true}
-      DOCKER_UPDATE_CONTAINER: outlook-mail-reader
-      DOCKER_UPDATE_API_VERSION: ${OUTLOOKEMAIL_DOCKER_UPDATE_API_VERSION:-1.41}
-      OAUTH_CLIENT_ID: ${OUTLOOKEMAIL_OAUTH_CLIENT_ID:-9e5f94bc-e8a4-4e73-b8be-63364c29d753}
-      OAUTH_REDIRECT_URI: ${OUTLOOKEMAIL_OAUTH_REDIRECT_URI:-http://localhost:8080}
+      TZ: "${TZ:-Asia/Shanghai}"
+      HTTP_PROXY: "http://host.docker.internal:7890"
+      HTTPS_PROXY: "http://host.docker.internal:7890"
+      ALL_PROXY: "socks5://host.docker.internal:7890"
+      NO_PROXY: "localhost,127.0.0.1,grok-register,grok2api,grokiq-backend,grokiq-frontend"
+      GROK2API_DATABASE_URL: "${GROK2API_DATABASE_URL:-}"
+      GROK2API_QUALITY_GUARD_DIR: /var/lib/grok2api-quality-guard
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ./outlookemail-data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock
+      - "${GROK2API_CONFIG:-../grok2api/config.yaml}:/run/grok2api/config.yaml:ro"
+      - ../grok2api/data:/app/data
+      - grok2api_quality_guard_state:/var/lib/grok2api-quality-guard
+
+  # GrokIQ 后端：账号质量探针、降智识别与自动隔离服务
+  grokiq-backend:
+    container_name: grokiq-backend
+    image: ${GROKIQ_BACKEND_IMAGE:-grokiq-backend:local}
+    build:
+      context: ../grok-iq/backend
+      args:
+        GROKIQ_VERSION: ${GROKIQ_VERSION:-}
+    init: true
+    restart: unless-stopped
+    depends_on:
+      grok2api:
+        condition: service_healthy
+    ports:
+      - "${GROKIQ_API_PORT:-8090}:8090"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      GROKIQ_HOST: 0.0.0.0
+      GROKIQ_PORT: 8090
+      GROKIQ_DATABASE_PATH: /app/data/grokiq.db
+      GROKIQ_RUNTIME_SECRET_KEY: ${GROKIQ_RUNTIME_SECRET_KEY:-}
+      GROKIQ_JWT_SECRET_KEY: ${GROKIQ_JWT_SECRET_KEY:-}
+      GROKIQ_JWT_TTL_SECONDS: ${GROKIQ_JWT_TTL_SECONDS:-604800}
+      GROKIQ_GROK2API_BASE_URL: ${GROKIQ_GROK2API_BASE_URL:-http://grok2api:8000}
+      GROKIQ_GROK2API_ADMIN_USERNAME: ${GROKIQ_GROK2API_ADMIN_USERNAME:-admin}
+      GROKIQ_GROK2API_ADMIN_PASSWORD: ${GROKIQ_GROK2API_ADMIN_PASSWORD:-Admin@Grok2026!}
+      GROKIQ_GROK_REGISTER_WEBHOOK_TOKEN: ${GROKIQ_GROK_REGISTER_WEBHOOK_TOKEN:-grokiq_webhook_token_2026}
+      GROKIQ_SSO_PROXY: ${GROKIQ_SSO_PROXY:-http://host.docker.internal:7890}
+      GROKIQ_INITIAL_PROBE_ON_REGISTER: ${GROKIQ_INITIAL_PROBE_ON_REGISTER:-true}
+      GROKIQ_REGISTER_PROBE_STABILIZATION_SECONDS: ${GROKIQ_REGISTER_PROBE_STABILIZATION_SECONDS:-15}
+      GROKIQ_REGISTER_PROBE_PROFILE_IDS: '${GROKIQ_REGISTER_PROBE_PROFILE_IDS:-["quality-marker"]}'
+      GROKIQ_REGISTER_PROBE_EXECUTION_MODE: ${GROKIQ_REGISTER_PROBE_EXECUTION_MODE:-chat}
+      GROKIQ_REGISTER_PROBE_ROUNDS: ${GROKIQ_REGISTER_PROBE_ROUNDS:-3}
+      GROKIQ_REGISTER_PROBE_PROXY_TARGETS: '${GROKIQ_REGISTER_PROBE_PROXY_TARGETS:-[{"kind":"direct","id":null}]}'
+      GROKIQ_REGISTER_CALLBACK_ENABLED: ${GROKIQ_REGISTER_CALLBACK_ENABLED:-true}
+      GROKIQ_REGISTER_CALLBACK_URL: ${GROKIQ_REGISTER_CALLBACK_URL:-http://grok-register:8787/api/integrations/grokiq/notify}
+      GROKIQ_WECHAT_NOTIFICATION_ENABLED: ${GROKIQ_WECHAT_NOTIFICATION_ENABLED:-false}
+      GROKIQ_WECHAT_APP_ID: ${GROKIQ_WECHAT_APP_ID:-}
+      GROKIQ_WECHAT_APP_SECRET: ${GROKIQ_WECHAT_APP_SECRET:-}
+      GROKIQ_WECHAT_OPENID: ${GROKIQ_WECHAT_OPENID:-}
+      GROKIQ_WECHAT_TEMPLATE_ID: ${GROKIQ_WECHAT_TEMPLATE_ID:-}
+      GROKIQ_CORS_ORIGINS: ${GROKIQ_CORS_ORIGINS:-https://monitor.lvyrix.com,http://localhost:8091,http://127.0.0.1:8091}
+      NO_PROXY: "localhost,127.0.0.1,grok-register,grok2api,grokiq-backend,grokiq-frontend"
+    volumes:
+      - ../grok-iq/data:/app/data
+    extra_hosts:
+      - host.docker.internal:host-gateway
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5000/"]
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/api/health', timeout=4)"
       interval: 30s
       timeout: 5s
-      start_period: 20s
+      start_period: 15s
       retries: 3
+
+  # GrokIQ 前端：管理面板
+  grokiq-frontend:
+    container_name: grokiq-frontend
+    image: ${GROKIQ_FRONTEND_IMAGE:-grokiq-frontend:local}
+    build:
+      context: ../grok-iq/frontend
+      args:
+        VITE_API_BASE_URL: /api
+    init: true
+    restart: unless-stopped
+    depends_on:
+      grokiq-backend:
+        condition: service_healthy
+    ports:
+      - "${GROKIQ_WEB_PORT:-8091}:80"
+
+volumes:
+  grok2api_quality_guard_state:

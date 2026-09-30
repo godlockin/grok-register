@@ -91,54 +91,59 @@ def check_xai_signup(proxy_url: str, http_get: Callable) -> CheckResult:
     """按注册浏览器同一出口检查 accounts.x.ai，CF 拦截时禁止继续建号。"""
     proxy_url = str(proxy_url or "").strip()
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else {}
-    try:
-        resp = http_get(
-            XAI_SIGNUP_URL,
-            headers={
-                "Accept": "text/html,application/xhtml+xml",
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/138.0.0.0 Safari/537.36"
-                ),
-            },
-            timeout=15,
-            allow_redirects=True,
-            proxies=proxies,
-            # curl_cffi 默认指纹容易被 accounts.x.ai 的 Cloudflare 判为非浏览器。
-            # 预检必须使用与 OAuth 请求相同的 Chrome 指纹，否则会把可访问页面误判为 403。
-            impersonate="chrome",
-            _allow_direct_fallback=False,
-        )
-        status = int(getattr(resp, "status_code", 0) or 0)
-        text = str(getattr(resp, "text", "") or "").lower()
-        headers = {
-            str(k).lower(): str(v).lower()
-            for k, v in dict(getattr(resp, "headers", {}) or {}).items()
-        }
-        body_challenge = (
-            "just a moment" in text[:2000]
-            or "checking your browser" in text[:2000]
-            or "__cf_chl" in text
-            or "cf-error" in text
-        )
-        # Cloudflare 可能给正常页面也加 server: cloudflare，不能仅凭该头阻断。
-        cf_challenge = body_challenge or (
-            status in (403, 429, 503) and "cloudflare" in headers.get("server", "")
-        )
-        if status in (403, 429, 503) and cf_challenge:
-            return (
-                XAI_SIGNUP_CHECK_NAME,
-                False,
-                f"Cloudflare 拦截 HTTP {status}；请更换当前 proxy 后重试",
+    last_exc = None
+    for attempt in range(3):
+        try:
+            resp = http_get(
+                XAI_SIGNUP_URL,
+                headers={
+                    "Accept": "text/html,application/xhtml+xml",
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/138.0.0.0 Safari/537.36"
+                    ),
+                },
+                timeout=15,
+                allow_redirects=True,
+                proxies=proxies,
+                # curl_cffi 默认指纹容易被 accounts.x.ai 的 Cloudflare 判为非浏览器。
+                # 预检必须使用与 OAuth 请求相同的 Chrome 指纹，否则会把可访问页面误判为 403。
+                impersonate="chrome",
+                _allow_direct_fallback=False,
             )
-        if cf_challenge:
-            return XAI_SIGNUP_CHECK_NAME, False, "仍停留在 Cloudflare 挑战页"
-        if status >= 400 or status <= 0:
-            return XAI_SIGNUP_CHECK_NAME, False, f"HTTP {status or 'unknown'}"
-        return XAI_SIGNUP_CHECK_NAME, True, f"可达 HTTP {status}"
-    except Exception as exc:
-        return XAI_SIGNUP_CHECK_NAME, False, redact_proxy_text(exc)
+            status = int(getattr(resp, "status_code", 0) or 0)
+            text = str(getattr(resp, "text", "") or "").lower()
+            headers = {
+                str(k).lower(): str(v).lower()
+                for k, v in dict(getattr(resp, "headers", {}) or {}).items()
+            }
+            body_challenge = (
+                "just a moment" in text[:2000]
+                or "checking your browser" in text[:2000]
+                or "__cf_chl" in text
+                or "cf-error" in text
+            )
+            # Cloudflare 可能给正常页面也加 server: cloudflare，不能仅凭该头阻断。
+            cf_challenge = body_challenge or (
+                status in (403, 429, 503) and "cloudflare" in headers.get("server", "")
+            )
+            if status in (403, 429, 503) and cf_challenge:
+                return (
+                    XAI_SIGNUP_CHECK_NAME,
+                    False,
+                    f"Cloudflare 拦截 HTTP {status}；请更换当前 proxy 后重试",
+                )
+            if cf_challenge:
+                return XAI_SIGNUP_CHECK_NAME, False, "仍停留在 Cloudflare 挑战页"
+            if status >= 400 or status <= 0:
+                return XAI_SIGNUP_CHECK_NAME, False, f"HTTP {status or 'unknown'}"
+            return XAI_SIGNUP_CHECK_NAME, True, f"可达 HTTP {status}"
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1.0)
+    return XAI_SIGNUP_CHECK_NAME, False, redact_proxy_text(last_exc)
 
 
 def has_blocking_xai_failure(results: List[CheckResult]) -> bool:
@@ -294,6 +299,31 @@ def check_email_api(provider: str, config: dict, http_get: Callable, http_post: 
                 return "邮箱API", False, "未配置 cloudmail_url"
             resp = http_get(url, timeout=10)
             return "邮箱API", resp.status_code < 400, f"CloudMail HTTP {resp.status_code}"
+
+        if provider == "tempmail_io":
+            base = str(config.get("tempmail_io_api_base", "") or "https://api.internal.temp-mail.io/api/v3").rstrip("/")
+            resp = http_get(f"{base}/domains", headers={"Accept": "application/json"}, timeout=12)
+            if resp.status_code >= 400:
+                return "邮箱API", False, f"TempMail.io HTTP {resp.status_code}"
+            domains_payload = resp.json() or {}
+            domains_list = domains_payload.get("domains") if isinstance(domains_payload, dict) else domains_payload
+            domains = [d.get("name") for d in (domains_list or []) if isinstance(d, dict) and d.get("name")]
+            if domains:
+                return "邮箱API", True, f"TempMail.io 可达，当前可用域名 {len(domains)} 个 ({', '.join(domains[:3])}...)"
+            return "邮箱API", True, f"TempMail.io 可达 HTTP {resp.status_code}"
+
+        if provider == "haoweichi":
+            base = str(config.get("haoweichi_api_base", "") or "https://www.haoweichi.com").rstrip("/")
+            resp = http_get(f"{base}/v1/mail/address", headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=12)
+            if resp.status_code >= 400:
+                return "邮箱API", False, f"Haoweichi HTTP {resp.status_code}"
+            return "邮箱API", True, f"Haoweichi 可达 HTTP {resp.status_code} (域名 cankaohe.com)"
+
+        if provider == "beeinbox":
+            resp = http_get("https://beeinbox.com/", headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+            if resp.status_code >= 400:
+                return "邮箱API", False, f"BeeInbox HTTP {resp.status_code}"
+            return "邮箱API", True, f"BeeInbox 可达 HTTP {resp.status_code} (域名 chinasteel.xyz)"
 
         return "邮箱API", True, f"提供商 {provider} 跳过深度探测"
     except Exception as exc:

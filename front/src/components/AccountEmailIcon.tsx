@@ -8,6 +8,8 @@ const EMAIL_PROVIDER_LABELS: Record<string, string> = {
   yyds: "YYDS 邮箱",
   mailnest: "MailNest",
   cloudmail: "CloudMail",
+  tempmail_io: "TempMail.io",
+  haoweichi: "Haoweichi",
   history: "历史文件",
 };
 

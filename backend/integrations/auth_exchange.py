@@ -624,7 +624,7 @@ def poll_device_token(
                         "X-Grok-Client-Version": GROK_VERSION,
                     },
                     impersonate="chrome",
-                    timeout=20,
+                    timeout=45,
                 )
             except Exception as e:
                 last_err = f"token 异常: {e}"
@@ -1052,22 +1052,28 @@ def sso_to_token_auth_code(sso_cookie: str, proxy: str = "", log=print) -> dict 
         "client_id": CLIENT_ID,
         "code_verifier": verifier,
     })
-    try:
-        r = s.post(
-            f"{OIDC_ISSUER}/oauth2/token",
-            data=token_data,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "User-Agent": GROK_TOKEN_UA,
-                "X-Grok-Client-Version": GROK_VERSION,
-                "Accept": "*/*",
-            },
-            impersonate="chrome",
-            timeout=15,
-        )
-    except Exception as e:
-        log(f"  ❌ token 异常: {e}")
-        return None
+    r = None
+    for attempt in range(3):
+        try:
+            r = s.post(
+                f"{OIDC_ISSUER}/oauth2/token",
+                data=token_data,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": GROK_TOKEN_UA,
+                    "X-Grok-Client-Version": GROK_VERSION,
+                    "Accept": "*/*",
+                },
+                impersonate="chrome",
+                timeout=45,
+            )
+            break
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(1.0)
+            else:
+                log(f"  ❌ token 异常: {e}")
+                return None
     if r.status_code < 200 or r.status_code >= 300:
         log(f"  ❌ token HTTP {r.status_code}: {str(r.text)[:200]}")
         return None

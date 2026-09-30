@@ -63,6 +63,11 @@ const PROVIDERS = [
     label: "CloudMail 自建邮箱",
     description: "适合自建 cloud-mail，需要站点地址、管理员账号和域名。",
   },
+  {
+    value: "tempmail_io",
+    label: "TempMail.io 免费临时邮箱",
+    description: "免鉴权、零验证码、纯正 .com 域名池，适合快速注册与规避一次性邮箱拦截。",
+  },
 ];
 // cpa / grok2api 保留类型仅为兼容；路由已重定向到 tokenauth
 export type SettingsSection = "registration" | "tokenauth" | "cpa" | "grok2api" | "mail" | "outlook";
@@ -1181,6 +1186,13 @@ export function SettingsPage({ section = "registration" }: { section?: SettingsS
                 <ConfigField {...fieldState} label="管理员邮箱" field="cloudmail_admin_email" />
                 <ConfigField {...fieldState} label="管理员密码" field="cloudmail_password" type="password" />
                 <ConfigField {...fieldState} label="收信域名" field="defaultDomains" helper="多个域名可用逗号或空格分隔" />
+              </>
+            ) : null}
+
+            {selectedProvider.value === "tempmail_io" ? (
+              <>
+                <ConfigField {...fieldState} label="API 根地址" field="tempmail_io_api_base" helper="默认 https://api.internal.temp-mail.io/api/v3，无需改动" />
+                <ConfigField {...fieldState} label="指定域名" field="tempmail_io_domain" helper="留空自动轮换可用 .com 域名（如 ozsaip.com, yzcalo.com 等）" />
               </>
             ) : null}
 

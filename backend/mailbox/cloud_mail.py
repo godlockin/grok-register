@@ -45,11 +45,27 @@ def _response_data(resp, action: str):
     return data.get("data")
 
 
+DEFAULT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+
+def _json_headers(auth: str = "") -> dict:
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": DEFAULT_UA,
+    }
+    if auth:
+        headers["Authorization"] = auth
+    return headers
+
+
 def login(http_post: HttpPost, url: str, email: str, password: str) -> str:
     resp = http_post(
         f"{url}/api/login",
         json={"email": email, "password": password},
-        headers={"Content-Type": "application/json"},
+        headers=_json_headers(),
     )
     token_data = _response_data(resp, "登录")
     token = token_data.get("token") if isinstance(token_data, dict) else None
@@ -69,7 +85,7 @@ def add_address(
     resp = http_post(
         f"{url}/api/account/add",
         json={"email": address, "token": ""},
-        headers={"Content-Type": "application/json", "Authorization": jwt},
+        headers=_json_headers(jwt),
     )
     data = _response_data(resp, "添加邮箱")
     return data if isinstance(data, dict) else {}
@@ -87,7 +103,7 @@ def delete_address(
     resp = http_delete(
         f"{url}/api/account/delete",
         params={"accountId": account_id},
-        headers={"Content-Type": "application/json", "Authorization": jwt},
+        headers=_json_headers(jwt),
     )
     return _response_data(resp, "删除邮箱")
 
@@ -101,7 +117,7 @@ def gen_public_token(
     resp = http_post(
         f"{url}/api/public/genToken",
         json={"email": admin_email, "password": admin_password},
-        headers={"Content-Type": "application/json"},
+        headers=_json_headers(),
     )
     token_data = _response_data(resp, "获取公开 token")
     token = token_data.get("token") if isinstance(token_data, dict) else None
@@ -123,7 +139,7 @@ def public_email_list(
     resp = http_post(
         f"{url}/api/public/emailList",
         json=payload,
-        headers={"Content-Type": "application/json", "Authorization": public_token},
+        headers=_json_headers(public_token),
     )
     data = _response_data(resp, "查询邮件")
     if isinstance(data, list):
@@ -213,7 +229,7 @@ def wait_for_code(
     admin_password: str,
     email: str,
     *,
-    timeout: int = 60,
+    timeout: int = 90,
     poll_interval: int = 3,
     raise_if_cancelled: Callable[[Optional[Callable[[], bool]]], None],
     sleep_with_cancel: Callable[[float, Optional[Callable[[], bool]]], None],
@@ -223,7 +239,8 @@ def wait_for_code(
 ) -> str:
     if not url:
         raise Exception("CloudMail URL 未配置")
-    deadline = time.time() + timeout
+    actual_timeout = max(timeout, 90)
+    deadline = time.time() + actual_timeout
     seen_attempts = {}
     next_resend_at = time.time() + 35
     try:
@@ -308,6 +325,6 @@ def wait_for_code(
                         f"id={msg_id} attempt={seen_attempts[msg_id]}"
                     )
             sleep_with_cancel(poll_interval, cancel_callback)
-        raise Exception(f"CloudMail 在 {timeout}s 内未收到验证码邮件")
+        raise Exception(f"CloudMail 在 {actual_timeout}s 内未收到验证码邮件")
     finally:
         cleanup_address(http_post, http_delete, url, admin_email, admin_password, email)

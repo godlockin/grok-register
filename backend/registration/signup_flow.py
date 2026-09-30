@@ -725,15 +725,21 @@ const patterns = [
     /已被拒绝[^。\n]{0,40}邮箱/,
     /email domain[^.\n]{0,80}rejected/i,
     /domain[^.\n]{0,40}(has been |is )?rejected/i,
+    /sign-ups from this email domain/i,
+    /email domain aren[’']t allowed/i,
     /please use (a )?different email/i,
     /use another email address/i,
     /请使用其他邮箱/,
     /support@x\.ai/,
+    /too many code requests/i,
+    /wait a few minutes before requesting/i,
+    /non-disposable email/i,
+    /disposable email/i,
 ];
 for (const text of texts) {
     for (const re of patterns) {
         if (re.test(text)) {
-            const m = text.match(/.{0,40}(拒绝|rejected|different email|其他邮箱).{0,80}/i);
+            const m = text.match(/.{0,40}(拒绝|rejected|different email|其他邮箱|too many code requests|wait a few minutes|aren[’']t allowed|non-disposable|disposable).{0,80}/i);
             return (m && m[0]) || text.slice(0, 180);
         }
     }

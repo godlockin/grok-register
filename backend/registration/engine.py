@@ -36,6 +36,9 @@ from backend.mailbox import cloud_mail as cloudmail_provider
 from backend.mailbox import duck_mail as duckmail_provider
 from backend.mailbox import mail_nest as mailnest_provider
 from backend.mailbox import outlook_pool as outlookemail_provider
+from backend.mailbox import temp_mail_io as tempmail_io_provider
+from backend.mailbox import haoweichi as haoweichi_provider
+from backend.mailbox import beeinbox as beeinbox_provider
 from backend.mailbox import yyds_mail as yyds_provider
 from backend.mailbox.utilities import extract_verification_code as _extract_code
 from backend.mailbox.utilities import generate_username as _generate_username
@@ -303,6 +306,10 @@ DEFAULT_CONFIG = {
     "duckmail_api_key": "",
     "duckmail_api_base": "https://api.duckmail.sbs",
     "defaultDomains": "",
+    "tempmail_io_api_base": "https://api.internal.temp-mail.io/api/v3",
+    "tempmail_io_domain": "",
+    "haoweichi_api_base": "https://www.haoweichi.com",
+    "beeinbox_domain": "chinasteel.xyz",
     "cloudmail_url": "",
     "cloudmail_admin_email": "",
     "cloudmail_password": "",
@@ -2007,8 +2014,33 @@ def _build_request_kwargs(**kwargs):
 
 def _http_request(method, url, **kwargs):
     kwargs.pop("_allow_direct_fallback", None)
-    with direct_http_session() as session:
-        return session.request(method, url, **_build_request_kwargs(**kwargs))
+    req_kwargs = _build_request_kwargs(**kwargs)
+    last_exc = None
+    for attempt in range(3):
+        try:
+            with direct_http_session() as session:
+                return session.request(method, url, **req_kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+    try:
+        import requests as std_requests
+
+        s = std_requests.Session()
+        s.trust_env = False
+        headers = dict(req_kwargs.get("headers") or {})
+        if "User-Agent" not in headers and "user-agent" not in headers:
+            headers["User-Agent"] = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        req_kwargs["headers"] = headers
+        req_kwargs.pop("impersonate", None)
+        return s.request(method, url, **req_kwargs)
+    except Exception:
+        raise last_exc or Exception(f"HTTP request failed: {method} {url}")
+
 
 
 def http_get(url, **kwargs):
@@ -2322,6 +2354,145 @@ def cloudmail_get_oai_code(
     )
 
 
+def get_tempmail_io_api_base():
+    return str(
+        os.environ.get("TEMPMAIL_IO_API_BASE")
+        or config.get("tempmail_io_api_base", "")
+        or "https://api.internal.temp-mail.io/api/v3"
+    ).strip().rstrip("/")
+
+
+def get_tempmail_io_domain():
+    return str(os.environ.get("TEMPMAIL_IO_DOMAIN") or config.get("tempmail_io_domain", "") or "").strip()
+
+
+def tempmail_io_get_email_and_token():
+    return tempmail_io_provider.create_mailbox(
+        http_get,
+        http_post,
+        base_url=get_tempmail_io_api_base(),
+        preferred_domain=get_tempmail_io_domain(),
+    )
+
+
+def tempmail_io_get_oai_code(
+    dev_token,
+    email,
+    timeout=60,
+    poll_interval=3,
+    log_callback=None,
+    cancel_callback=None,
+    resend_callback=None,
+):
+    return tempmail_io_provider.wait_for_code(
+        http_get,
+        get_tempmail_io_api_base(),
+        email,
+        token=dev_token,
+        timeout=timeout,
+        poll_interval=poll_interval,
+        extract_code=extract_verification_code,
+        raise_if_cancelled=raise_if_cancelled,
+        sleep_with_cancel=sleep_with_cancel,
+        log_callback=log_callback,
+        cancel_callback=cancel_callback,
+        resend_callback=resend_callback,
+    )
+
+
+def get_haoweichi_api_base():
+    return str(
+        os.environ.get("HAOWEICHI_API_BASE")
+        or config.get("haoweichi_api_base", "")
+        or "https://www.haoweichi.com"
+    ).strip().rstrip("/")
+
+
+def haoweichi_get_email_and_token():
+    try:
+        return haoweichi_provider.create_mailbox(
+            http_get,
+            base_url=get_haoweichi_api_base(),
+        )
+    except Exception as exc:
+        registration_log(f"[!] Haoweichi 请求失败或触发频控 ({exc})，自动无缝切换至备用通道 BeeInbox (chinasteel.xyz)...")
+        return beeinbox_get_email_and_token()
+
+
+
+def haoweichi_get_oai_code(
+    dev_token,
+    email,
+    timeout=90,
+    poll_interval=5,
+    log_callback=None,
+    cancel_callback=None,
+    resend_callback=None,
+):
+    # 如果该账号是由备用通道 beeinbox 分发的，直接走 beeinbox 收信
+    if dev_token == "beeinbox" or "@chinasteel.xyz" in email.lower() or "@ussteel.xyz" in email.lower():
+        return beeinbox_get_oai_code(
+            dev_token,
+            email,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            resend_callback=resend_callback,
+        )
+    del dev_token
+    return haoweichi_provider.wait_for_code(
+        http_get,
+        get_haoweichi_api_base(),
+        email,
+        timeout=timeout,
+        poll_interval=poll_interval,
+        extract_code=extract_verification_code,
+        raise_if_cancelled=raise_if_cancelled,
+        sleep_with_cancel=sleep_with_cancel,
+        log_callback=log_callback,
+        cancel_callback=cancel_callback,
+        resend_callback=resend_callback,
+    )
+
+
+def beeinbox_get_email_and_token():
+    config = load_config()
+    domain = str(config.get("beeinbox_domain", "") or "chinasteel.xyz").strip()
+    try:
+        return beeinbox_provider.create_mailbox(domain=domain)
+    except Exception as exc:
+        registration_log(f"[!] BeeInbox 创建失败 ({exc})，尝试降级至 Haoweichi...")
+        return haoweichi_provider.create_mailbox(
+            http_get,
+            base_url=get_haoweichi_api_base(),
+        )
+
+
+
+def beeinbox_get_oai_code(
+    dev_token,
+    email,
+    timeout=90,
+    poll_interval=4,
+    log_callback=None,
+    cancel_callback=None,
+    resend_callback=None,
+):
+    del dev_token
+    return beeinbox_provider.wait_for_code(
+        email=email,
+        timeout=timeout,
+        poll_interval=poll_interval,
+        extract_code=extract_verification_code,
+        raise_if_cancelled=raise_if_cancelled,
+        sleep_with_cancel=sleep_with_cancel,
+        log_callback=log_callback,
+        cancel_callback=cancel_callback,
+        resend_callback=resend_callback,
+    )
+
+
 def get_email_provider():
     return config.get("email_provider", "cloudflare")
 
@@ -2332,6 +2503,12 @@ def get_email_and_token(api_key=None):
         return outlookemail_get_email_and_token()
     if provider == "yyds":
         return yyds_get_email_and_token(api_key=api_key, jwt=get_yyds_jwt())
+    if provider == "tempmail_io":
+        return tempmail_io_get_email_and_token()
+    if provider == "haoweichi":
+        return haoweichi_get_email_and_token()
+    if provider == "beeinbox":
+        return beeinbox_get_email_and_token()
     if provider == "cloudmail":
         return cloudmail_get_email_and_token()
     if provider == "cloudflare":
@@ -2403,6 +2580,36 @@ def get_oai_code(
             log_callback=log_callback,
             jwt=get_yyds_jwt(),
             cancel_callback=cancel_callback,
+        )
+    if provider == "tempmail_io":
+        return tempmail_io_get_oai_code(
+            dev_token,
+            email,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            resend_callback=resend_callback,
+        )
+    if provider == "haoweichi":
+        return haoweichi_get_oai_code(
+            dev_token,
+            email,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            resend_callback=resend_callback,
+        )
+    if provider == "beeinbox":
+        return beeinbox_get_oai_code(
+            dev_token,
+            email,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            resend_callback=resend_callback,
         )
     if provider == "cloudmail":
         return cloudmail_get_oai_code(
