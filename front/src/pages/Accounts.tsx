@@ -13,6 +13,7 @@ import {
   Eye,
   Loader2,
   LogIn,
+  MailWarning,
   UploadCloud,
   MoreHorizontal,
   Power,
@@ -275,6 +276,51 @@ function reloginRecoveryKind(
   return null;
 }
 
+/** 邮箱服务登录态失效：账号根本没创建，重登无意义。 */
+function isMailboxAuthFailure(item: Pick<AccountRecord, "failure_reason">): boolean {
+  return /添加邮箱失败\s*[:：]\s*身份认证失效|邮箱(?:服务)?(?:登录态|认证)(?:失效|过期)/i.test(
+    item.failure_reason || "",
+  );
+}
+
+function MailboxAuthHint({ item, compact = false }: { item: AccountRecord; compact?: boolean }) {
+  if (!isMailboxAuthFailure(item)) return null;
+  if (compact) {
+    return (
+      <div
+        role="status"
+        className="flex min-w-0 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-2 py-1.5 text-sky-950"
+        title="邮箱服务登录态失效，注册在创建邮箱阶段中断，账号未创建"
+      >
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white text-sky-600 ring-1 ring-sky-200">
+          <MailWarning className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1 truncate text-[11px] font-semibold leading-4">
+          邮箱服务认证失效 · 账号未创建
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div role="status" className="rounded-lg border border-sky-200 bg-sky-50/80 p-3.5 text-sky-950">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <Badge variant="secondary" className="rounded-md px-1.5 py-0 text-[10px] shadow-none">
+          需重新注册
+        </Badge>
+        <span className="text-[11px] font-medium text-sky-700">邮箱服务异常</span>
+      </div>
+      <div className="text-sm font-semibold leading-5">邮箱服务登录态失效，账号未创建</div>
+      <p className="mt-1 text-xs leading-5 text-sky-800">
+        注册在创建邮箱这一步就中断，没有生成账号文件与 SSO，因此无法通过「立即重登」修复。
+        请先在设置页确认邮箱服务凭据可用，再重新发起注册任务。
+      </p>
+      {item.failure_reason ? (
+        <p className="mt-1 break-all text-xs text-sky-700">{item.failure_reason}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ReloginRecoveryHint({
   item,
   compact = false,
@@ -297,6 +343,7 @@ function ReloginRecoveryHint({
     ? "未获取到 SSO，授权文件尚未生成"
     : "SSO 换 Token 失败，授权文件尚未生成";
   const compactTitle = kind === "sso_timeout" ? "SSO 获取超时" : "SSO 换 Token 失败";
+  const categoryLabel = kind === "sso_timeout" ? "SSO 获取异常" : "授权转换异常";
   const credentialsMissing = !item.email || !item.password;
   const disabled = taskRunning || credentialsMissing;
   const buttonLabel = running ? (stage || "正在重登") : "立即重登";
@@ -357,7 +404,7 @@ function ReloginRecoveryHint({
                 可重登修复
               </Badge>
               <span className="text-[11px] font-medium text-amber-700">
-                {kind === "sso_timeout" ? "SSO 获取异常" : "授权转换异常"}
+                {categoryLabel}
               </span>
             </div>
             <div className="text-sm font-semibold leading-5">{running ? (stage || "正在重新登录") : title}</div>
@@ -542,6 +589,7 @@ function AccountDetails({
       </div>
 
       <CredentialErrorHint item={detail} />
+      <MailboxAuthHint item={detail} />
       <ReloginRecoveryHint
         item={detail}
         running={reloginRunning}
@@ -1505,6 +1553,7 @@ export function AccountsPage() {
                           <div className="mt-2 space-y-2">
                             <MobileStatusGrid item={item} />
                             <CredentialErrorHint item={item} compact />
+                            <MailboxAuthHint item={item} compact />
                             <ReloginRecoveryHint
                               item={item}
                               compact
@@ -1616,12 +1665,10 @@ export function AccountsPage() {
                                     </Badge>
                                   </div>
                                 ) : null}
-                                {isInvalidCredentials(item) ? (
-                                  <div className="mt-2">
+                                {isInvalidCredentials(item) || isMailboxAuthFailure(item) || reloginRecoveryKind(item) ? (
+                                  <div className="mt-2 space-y-2">
                                     <CredentialErrorHint item={item} compact />
-                                  </div>
-                                ) : reloginRecoveryKind(item) ? (
-                                  <div className="mt-2">
+                                    <MailboxAuthHint item={item} compact />
                                     <ReloginRecoveryHint
                                       item={item}
                                       compact
