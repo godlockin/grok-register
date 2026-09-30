@@ -34,19 +34,9 @@ import {
 
 const PROVIDERS = [
   {
-    value: "cloudflare",
-    label: "Cloudflare 临时邮箱",
-    description: "适合自建 Worker/API；可配置域名、鉴权方式和收信路径。",
-  },
-  {
     value: "duckmail",
     label: "DuckMail / Mail.tm",
     description: "通用临时邮箱接口；DuckMail 可填 API Key，Mail.tm 公共接口可留空。",
-  },
-  {
-    value: "yyds",
-    label: "YYDS 临时邮箱",
-    description: "需要 YYDS API Key 或 JWT，可固定已验证收信域名。",
   },
   {
     value: "mailnest",
@@ -581,9 +571,11 @@ export function SettingsPage({ section = "registration" }: { section?: SettingsS
     setConfig((previous) => ({ ...previous, [key]: value }));
   };
   const fieldState = { config, onFieldChange: setField };
-  const selectedProvider = PROVIDERS.find(
-    (item) => item.value === (config.email_provider || "cloudflare")
-  ) || PROVIDERS[0];
+  // Fall back to the first available provider rather than a hardcoded name, so
+  // removing a provider can never leave the UI pointing at one it no longer
+  // offers.
+  const selectedProvider =
+    PROVIDERS.find((item) => item.value === config.email_provider) || PROVIDERS[0];
 
   const onSave = async () => {
     setSaving(true);
@@ -708,7 +700,7 @@ export function SettingsPage({ section = "registration" }: { section?: SettingsS
               <Label htmlFor="email_provider">邮箱服务商</Label>
               <Select
                 id="email_provider"
-                value={config.email_provider || "cloudflare"}
+                value={config.email_provider || PROVIDERS[0].value}
                 onChange={(event) => setField("email_provider", event.target.value)}
               >
                 {PROVIDERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
